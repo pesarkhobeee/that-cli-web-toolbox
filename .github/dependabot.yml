@@ -1,0 +1,123 @@
+# Dependabot configuration for automated dependency updates
+# See https://docs.github.com/en/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
+
+version: 2
+updates:
+  # Go modules
+  - package-ecosystem: "gomod"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: Europe/Berlin
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: "deps"
+      prefix-development: "deps-dev"
+      include: "scope"
+    labels:
+      - "dependencies"
+      - "go"
+    rebase-strategy: "auto"
+    target-branch: "main"
+    versioning-strategy: "increase"
+    allow:
+      - dependency-type: "direct"
+      - dependency-type: "indirect"
+    ignore:
+      # Ignore patch updates for stable dependencies
+      - dependency-name: "*"
+        update-types: ["version-update:semver-patch"]
+        # Only for production dependencies, allow patch updates for security
+    groups:
+      # Group Go standard library extensions
+      golang-tools:
+        patterns:
+          - "golang.org/x/*"
+        update-types:
+          - "minor"
+          - "patch"
+      # Group Cobra CLI framework updates
+      cobra-group:
+        patterns:
+          - "github.com/spf13/cobra"
+          - "github.com/spf13/pflag"
+        update-types:
+          - "minor"
+          - "patch"
+      # Group ChromeDP related dependencies
+      chromedp-group:
+        patterns:
+          - "github.com/chromedp/*"
+        update-types:
+          - "minor"
+          - "patch"
+      # Group JSON experiment packages
+      json-experiment:
+        patterns:
+          - "github.com/go-json-experiment/*"
+        update-types:
+          - "minor"
+          - "patch"
+
+  # GitHub Actions
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "10:00"
+      timezone: Europe/Berlin
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "ci"
+      include: "scope"
+    labels:
+      - "dependencies"
+      - "github-actions"
+      - "ci"
+    rebase-strategy: "auto"
+    target-branch: "main"
+    groups:
+      # Group GitHub Actions updates
+      github-actions:
+        patterns:
+          - "actions/*"
+        update-types:
+          - "major"
+          - "minor"
+          - "patch"
+      # Group third-party actions
+      third-party-actions:
+        patterns:
+          - "*"
+        exclude-patterns:
+          - "actions/*"
+        update-types:
+          - "minor"
+          - "patch"
+
+  # Docker
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "tuesday"
+      time: "09:00"
+      timezone: Europe/Berlin
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "docker"
+      include: "scope"
+    labels:
+      - "dependencies"
+      - "docker"
+    rebase-strategy: "auto"
+    target-branch: "main"
+    ignore:
+      # Pin to major versions for stability
+      - dependency-name: "golang"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "chromedp/headless-shell"
+        update-types: ["version-update:semver-major"]
