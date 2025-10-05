@@ -20,6 +20,7 @@ type Config struct {
 	GetBody              bool
 	GetTextByCssSelector string
 	Timeout              int
+	Delay                int
 	Target               string
 	LogLevel             string
 	RemoteDebuggingPort  string
@@ -41,6 +42,7 @@ Features:
   • Support for both local HTML files and remote URLs
   • Connect to existing Chrome instances with remote debugging
   • Configurable logging levels for debugging
+  • Configurable delay to ensure proper page rendering (timeout auto-adjusts if needed)
 
 Examples:
   # Take a screenshot of a website
@@ -55,6 +57,12 @@ Examples:
   # Generate PDF and capture console logs
   that-cli-web-toolbox --printtopdf --consolelog https://example.com
 
+  # Take screenshot with custom delay for slow-loading pages
+  that-cli-web-toolbox --screenshot --delay 5 https://example.com
+
+  # Use large delay (timeout will be auto-adjusted to 25 seconds)
+  that-cli-web-toolbox --screenshot --delay 15 https://slow-site.com
+
   # Connect to existing Chrome with remote debugging
   that-cli-web-toolbox --remote-debugging-port localhost:9222 --screenshot https://example.com`,
 	RunE: runThatCliWebBrowser,
@@ -68,6 +76,7 @@ func init() {
 	rootCmd.Flags().BoolVarP(&cfg.GetBody, "body", "b", false, "Get the body text of the page")
 	rootCmd.Flags().StringVarP(&cfg.GetTextByCssSelector, "gettextbycssselector", "g", "", "Get text by CSS selector")
 	rootCmd.Flags().IntVarP(&cfg.Timeout, "timeout", "t", 10, "Timeout in seconds")
+	rootCmd.Flags().IntVarP(&cfg.Delay, "delay", "d", 2, "Delay in seconds to ensure rendering (timeout auto-adjusts if needed)")
 	rootCmd.Flags().StringVarP(&cfg.LogLevel, "loglevel", "l", "info",
 		"Set the logging level (debug, info, warn, error)")
 	rootCmd.Flags().StringVarP(&cfg.RemoteDebuggingPort, "remote-debugging-port", "r", "",
@@ -104,6 +113,7 @@ func runThatCliWebBrowser(cmd *cobra.Command, args []string) error {
 
 	slog.Debug("Starting that-cli-web-toolbox",
 		"timeout", cfg.Timeout,
+		"delay", cfg.Delay,
 		"logLevel", cfg.LogLevel,
 		"consoleLog", cfg.ConsoleLog,
 		"screenshot", cfg.Screenshot,
@@ -145,6 +155,25 @@ func runThatCliWebBrowser(cmd *cobra.Command, args []string) error {
 	}
 	cfg.Target = target
 
+	// Validate delay parameter
+	if cfg.Delay < 0 {
+		slog.Error("Invalid delay value", "delay", cfg.Delay)
+		return fmt.Errorf("delay cannot be negative: %d", cfg.Delay)
+	}
+	if cfg.Delay > 60 {
+		slog.Warn("Large delay value specified", "delay", cfg.Delay)
+	}
+
+	// Adjust timeout if it's insufficient for the specified delay
+	if cfg.Timeout <= (cfg.Delay + 10) {
+		originalTimeout := cfg.Timeout
+		cfg.Timeout = cfg.Delay + 10 // Add 10 second buffer
+		slog.Info("Timeout automatically adjusted to accommodate delay",
+			"originalTimeout", originalTimeout,
+			"delay", cfg.Delay,
+			"newTimeout", cfg.Timeout)
+	}
+
 	// Validate that at least one action is specified
 	if !cfg.ConsoleLog && !cfg.Screenshot && !cfg.PrintToPDF && !cfg.GetBody && cfg.GetTextByCssSelector == "" {
 		slog.Error("No action specified")
@@ -153,11 +182,11 @@ func runThatCliWebBrowser(cmd *cobra.Command, args []string) error {
 
 	// Initialize browser
 	if cfg.RemoteDebuggingPort != "" {
-		slog.Debug("Connecting to existing browser", "target", cfg.Target, "timeout", cfg.Timeout, "remotePort", cfg.RemoteDebuggingPort)
+		slog.Debug("Connecting to existing browser", "target", cfg.Target, "timeout", cfg.Timeout, "delay", cfg.Delay, "remotePort", cfg.RemoteDebuggingPort)
 	} else {
-		slog.Debug("Initializing new browser", "target", cfg.Target, "timeout", cfg.Timeout)
+		slog.Debug("Initializing new browser", "target", cfg.Target, "timeout", cfg.Timeout, "delay", cfg.Delay)
 	}
-	browser, err := chromedphelper.InitializeChromedp(cfg.Target, cfg.Timeout, cfg.RemoteDebuggingPort)
+	browser, err := chromedphelper.InitializeChromedp(cfg.Target, cfg.Timeout, cfg.Delay, cfg.RemoteDebuggingPort)
 	if err != nil {
 		slog.Error("Failed to initialize browser", "error", err)
 		return fmt.Errorf("failed to initialize browser: %w", err)

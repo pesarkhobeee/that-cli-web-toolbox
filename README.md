@@ -12,6 +12,7 @@ Features:
   • Support for both local HTML files and remote URLs
   • Connect to existing Chrome instances with remote debugging
   • Configurable logging levels for debugging
+  • Configurable delay to ensure proper page rendering (timeout auto-adjusts if needed)
 
 Examples:
   # Take a screenshot of a website
@@ -26,6 +27,9 @@ Examples:
   # Generate PDF and capture console logs
   that-cli-web-toolbox --printtopdf --consolelog https://example.com
 
+  # Take screenshot with custom delay for slow-loading pages
+  that-cli-web-toolbox --screenshot --delay 5 https://example.com
+
   # Connect to existing Chrome with remote debugging
   that-cli-web-toolbox --remote-debugging-port localhost:9222 --screenshot https://example.com
 
@@ -35,6 +39,7 @@ Usage:
 Flags:
   -b, --body                           Get the body text of the page
   -c, --consolelog                     Capture console logs from the page
+  -d, --delay int                      Delay in seconds to ensure rendering (timeout auto-adjusts if needed) (default 2)
   -g, --gettextbycssselector string    Get text by CSS selector
   -h, --help                           help for that-cli-web-toolbox
   -l, --loglevel string                Set the logging level (debug, info, warn, error) (default "info")
@@ -121,3 +126,7 @@ lsof -i :9222
 # Kill existing Chrome processes if needed
 pkill -f "chrome.*remote-debugging"
 ```
+
+## Timeout and Delay Relationship
+
+The tool automatically manages the relationship between `--timeout` and `--delay` to prevent conflicts:

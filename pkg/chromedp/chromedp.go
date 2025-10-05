@@ -18,12 +18,13 @@ type Browser struct {
 	Ctx       context.Context
 	Cancel    context.CancelFunc
 	TargetURL string
+	Delay     int
 }
 
 // InitializeChromedp creates a new browser session with timeout.
 // If remoteDebuggingPort is provided, connects to existing Chrome instance.
-func InitializeChromedp(target string, timeout int, remoteDebuggingPort string) (*Browser, error) {
-	slog.Debug("Initializing Chrome browser", "target", target, "timeout", timeout, "remotePort", remoteDebuggingPort)
+func InitializeChromedp(target string, timeout int, delay int, remoteDebuggingPort string) (*Browser, error) {
+	slog.Debug("Initializing Chrome browser", "target", target, "timeout", timeout, "delay", delay, "remotePort", remoteDebuggingPort)
 
 	var allocCtx context.Context
 	var cancelAlloc context.CancelFunc
@@ -79,6 +80,7 @@ func InitializeChromedp(target string, timeout int, remoteDebuggingPort string) 
 			Ctx:       ctx,
 			Cancel:    func() { cancelCtx(); cancelTask(); cancelAlloc() },
 			TargetURL: target,
+			Delay:     delay,
 		}, nil
 	} else {
 		// Create new headless Chrome instance
@@ -93,6 +95,7 @@ func InitializeChromedp(target string, timeout int, remoteDebuggingPort string) 
 			Ctx:       ctx,
 			Cancel:    func() { cancelCtx(); cancelAlloc() },
 			TargetURL: target,
+			Delay:     delay,
 		}, nil
 	}
 }
@@ -135,6 +138,11 @@ func (b *Browser) CaptureConsoleLogs() error {
 
 	if err := chromedp.Run(b.Ctx,
 		chromedp.Navigate(b.TargetURL),
+		chromedp.ActionFunc(func(ctx context.Context) error {
+			slog.Debug("Applying rendering delay", "delay", b.Delay, "url", b.TargetURL)
+			return nil
+		}),
+		chromedp.Sleep(time.Duration(b.Delay)*time.Second),
 	); err != nil {
 		slog.Error("Failed to navigate to target URL", "url", b.TargetURL, "error", err)
 		return err
@@ -156,6 +164,11 @@ func (b *Browser) GetTextBySelector(selector string) (string, error) {
 	var texts []string
 	err := chromedp.Run(b.Ctx,
 		chromedp.Navigate(b.TargetURL),
+		chromedp.ActionFunc(func(ctx context.Context) error {
+			slog.Debug("Applying rendering delay", "delay", b.Delay, "selector", selector)
+			return nil
+		}),
+		chromedp.Sleep(time.Duration(b.Delay)*time.Second),
 		chromedp.Evaluate(`
 			Array.from(document.querySelectorAll('`+selector+`')).map(el => el.textContent.trim()).filter(text => text.length > 0)
 		`, &texts),
@@ -184,6 +197,11 @@ func (b *Browser) TakeScreenshot() ([]byte, error) {
 	var buf []byte
 	err := chromedp.Run(b.Ctx,
 		chromedp.Navigate(b.TargetURL),
+		chromedp.ActionFunc(func(ctx context.Context) error {
+			slog.Debug("Applying rendering delay before screenshot", "delay", b.Delay, "url", b.TargetURL)
+			return nil
+		}),
+		chromedp.Sleep(time.Duration(b.Delay)*time.Second),
 		chromedp.FullScreenshot(&buf, 90),
 	)
 	if err != nil {
@@ -202,6 +220,11 @@ func (b *Browser) PrintToPDF() ([]byte, error) {
 	var pdfBuf []byte
 	err := chromedp.Run(b.Ctx,
 		chromedp.Navigate(b.TargetURL),
+		chromedp.ActionFunc(func(ctx context.Context) error {
+			slog.Debug("Applying rendering delay before PDF generation", "delay", b.Delay, "url", b.TargetURL)
+			return nil
+		}),
+		chromedp.Sleep(time.Duration(b.Delay)*time.Second),
 		chromedp.ActionFunc(func(ctx context.Context) error {
 			var err error
 			pdfBuf, _, err = page.PrintToPDF().WithPrintBackground(true).Do(ctx)
