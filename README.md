@@ -9,6 +9,7 @@ Features:
   • Capture console logs and JavaScript exceptions
   • Extract text content from pages
   • Extract text using CSS selectors
+  • Execute custom JavaScript before actions (supports async/await)
   • Support for both local HTML files and remote URLs
   • Connect to existing Chrome instances with remote debugging
   • Configurable logging levels for debugging
@@ -33,6 +34,15 @@ Examples:
   # Connect to existing Chrome with remote debugging
   that-cli-web-toolbox --remote-debugging-port localhost:9222 --screenshot https://example.com
 
+  # Execute custom JavaScript before taking screenshot
+  that-cli-web-toolbox --screenshot --js "window.scrollTo(0, document.body.scrollHeight)" https://example.com
+
+  # Execute async JavaScript (automatically wrapped in async IIFE)
+  that-cli-web-toolbox --screenshot --js "await new Promise(r => setTimeout(r, 2000)); window.scrollTo(0, document.body.scrollHeight);" https://example.com
+
+  # Execute JavaScript from file
+  that-cli-web-toolbox --screenshot --js-file examples/scroll-to-bottom.js https://example.com
+
 Usage:
   that-cli-web-toolbox [flags]
 
@@ -42,6 +52,8 @@ Flags:
   -d, --delay int                      Delay in seconds to ensure rendering (timeout auto-adjusts if needed) (default 2)
   -g, --gettextbycssselector string    Get text by CSS selector
   -h, --help                           help for that-cli-web-toolbox
+      --js string                      Execute custom JavaScript before action (supports async with 'await')
+      --js-file string                 Execute JavaScript from file before action (supports async with 'await')
   -l, --loglevel string                Set the logging level (debug, info, warn, error) (default "info")
   -p, --printtopdf                     Print the page to a PDF file
   -r, --remote-debugging-port string   Connect to existing Chrome instance with remote debugging (e.g., localhost:9222)
@@ -126,6 +138,72 @@ lsof -i :9222
 # Kill existing Chrome processes if needed
 pkill -f "chrome.*remote-debugging"
 ```
+
+## Custom JavaScript Execution
+
+Execute custom JavaScript code before taking screenshots, generating PDFs, or extracting text. This is useful for:
+
+- Scrolling to load lazy-loaded content
+- Clicking buttons to expand sections
+- Waiting for dynamic content to load
+- Manipulating the DOM before capture
+
+### Inline JavaScript
+
+Use `--js` to execute inline JavaScript:
+
+```bash
+# Scroll to bottom of the page
+that-cli-web-toolbox --screenshot --js "window.scrollTo(0, document.body.scrollHeight)" https://example.com
+
+# Click a button before taking screenshot
+that-cli-web-toolbox --screenshot --js "document.querySelector('.load-more').click()" https://example.com
+
+# Change background color
+that-cli-web-toolbox --screenshot --js "document.body.style.backgroundColor = 'white'" https://example.com
+```
+
+### Async JavaScript
+
+The tool automatically detects `await` keywords and wraps your code in an async IIFE:
+
+```bash
+# Wait for content to load, then scroll
+that-cli-web-toolbox --screenshot --js "await new Promise(r => setTimeout(r, 2000)); window.scrollTo(0, document.body.scrollHeight);" https://example.com
+
+# Multiple async operations
+that-cli-web-toolbox --screenshot --js "await fetch('/api/data'); await new Promise(r => setTimeout(r, 1000));" https://example.com
+```
+
+### JavaScript from File
+
+For complex scripts, use `--js-file`:
+
+```bash
+that-cli-web-toolbox --screenshot --js-file examples/scroll-to-bottom.js https://example.com
+```
+
+Example `scroll-to-bottom.js`:
+```javascript
+// Wait for initial content
+await new Promise(resolve => setTimeout(resolve, 500));
+
+// Scroll to bottom with smooth animation
+window.scrollTo({
+  top: document.body.scrollHeight,
+  behavior: 'smooth'
+});
+
+// Wait for scroll to complete
+await new Promise(resolve => setTimeout(resolve, 500));
+```
+
+### Notes
+
+- `--js` and `--js-file` are mutually exclusive
+- JavaScript executes after the page loads and the delay period, but before the action (screenshot, PDF, etc.)
+- Use `--loglevel debug` to see JavaScript execution details
+- The tool execution order is: Navigate → Delay → JavaScript → Action
 
 ## Timeout and Delay Relationship
 

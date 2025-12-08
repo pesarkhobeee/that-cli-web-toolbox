@@ -19,12 +19,14 @@ type Browser struct {
 	Cancel    context.CancelFunc
 	TargetURL string
 	Delay     int
+	JSCode    string
 }
 
 // InitializeChromedp creates a new browser session with timeout.
 // If remoteDebuggingPort is provided, connects to existing Chrome instance.
-func InitializeChromedp(target string, timeout int, delay int, remoteDebuggingPort string) (*Browser, error) {
-	slog.Debug("Initializing Chrome browser", "target", target, "timeout", timeout, "delay", delay, "remotePort", remoteDebuggingPort)
+// jsCode is optional JavaScript code to execute before each action.
+func InitializeChromedp(target string, timeout int, delay int, remoteDebuggingPort string, jsCode string) (*Browser, error) {
+	slog.Debug("Initializing Chrome browser", "target", target, "timeout", timeout, "delay", delay, "remotePort", remoteDebuggingPort, "hasJSCode", jsCode != "")
 
 	var allocCtx context.Context
 	var cancelAlloc context.CancelFunc
@@ -81,6 +83,7 @@ func InitializeChromedp(target string, timeout int, delay int, remoteDebuggingPo
 			Cancel:    func() { cancelCtx(); cancelTask(); cancelAlloc() },
 			TargetURL: target,
 			Delay:     delay,
+			JSCode:    jsCode,
 		}, nil
 	} else {
 		// Create new headless Chrome instance
@@ -96,22 +99,101 @@ func InitializeChromedp(target string, timeout int, delay int, remoteDebuggingPo
 			Cancel:    func() { cancelCtx(); cancelAlloc() },
 			TargetURL: target,
 			Delay:     delay,
+			JSCode:    jsCode,
 		}, nil
 	}
 }
 
-// CaptureConsoleLogs starts listening for console logs, exceptions, and dialogs.
-func (b *Browser) CaptureConsoleLogs() error {
+// executeJSAction returns a chromedp action that executes the browser's JS code.
+// If the code contains 'await', it wraps it in an async IIFE and waits for completion.
+func (b *Browser) executeJSAction() chromedp.Action {
+	if b.JSCode == "" {
+		return chromedp.ActionFunc(func(ctx context.Context) error {
+			return nil
+		})
+	}
+
+	jsCode := b.JSCode
+	hasAwait := strings.Contains(jsCode, "await")
+
+	// If the code contains 'await', wrap it in an async IIFE
+	if hasAwait {
+		jsCode = "(async () => { " + jsCode + " })();"
+	}
+
+	return chromedp.ActionFunc(func(ctx context.Context) error {
+		slog.Debug("Executing custom JavaScript", "codeLength", len(b.JSCode), "hasAwait", hasAwait)
+
+		if hasAwait {
+			// For async code, use runtime.Evaluate with awaitPromise to properly wait
+			p := runtime.Evaluate(jsCode).WithAwaitPromise(true)
+			_, exceptionDetails, err := p.Do(ctx)
+			if err != nil {
+				slog.Error("Failed to execute custom JavaScript", "error", err)
+				return fmt.Errorf("failed to execute custom JavaScript: %w", err)
+			}
+			if exceptionDetails != nil {
+				slog.Error("JavaScript exception during execution", "exception", exceptionDetails.Text)
+				return fmt.Errorf("JavaScript exception: %s", exceptionDetails.Text)
+			}
+		} else {
+			// For sync code, use regular evaluate
+			var result interface{}
+			if err := chromedp.Evaluate(jsCode, &result, chromedp.EvalAsValue).Do(ctx); err != nil {
+				slog.Error("Failed to execute custom JavaScript", "error", err)
+				return fmt.Errorf("failed to execute custom JavaScript: %w", err)
+			}
+		}
+
+		slog.Debug("Custom JavaScript executed successfully")
+		return nil
+	})
+}
+
+// NavigateAndPrepare navigates to the target URL, applies delay, and executes custom JS.
+// This should be called once before performing any actions on the page.
+func (b *Browser) NavigateAndPrepare() error {
+	slog.Debug("Navigating to target URL", "url", b.TargetURL)
+
+	err := chromedp.Run(b.Ctx,
+		chromedp.Navigate(b.TargetURL),
+		chromedp.ActionFunc(func(ctx context.Context) error {
+			slog.Debug("Applying rendering delay", "delay", b.Delay, "url", b.TargetURL)
+			return nil
+		}),
+		chromedp.Sleep(time.Duration(b.Delay)*time.Second),
+		b.executeJSAction(),
+	)
+	if err != nil {
+		slog.Error("Failed to navigate and prepare page", "url", b.TargetURL, "error", err)
+		return err
+	}
+
+	slog.Debug("Navigation and preparation completed successfully")
+	return nil
+}
+
+// SetupConsoleLogListeners sets up listeners for console logs, exceptions, and dialogs.
+// This should be called before NavigateAndPrepare if console log capture is needed.
+func (b *Browser) SetupConsoleLogListeners() {
 	slog.Debug("Setting up console log listeners")
 
 	chromedp.ListenTarget(b.Ctx, func(ev interface{}) {
 		switch ev := ev.(type) {
 		case *runtime.EventConsoleAPICalled:
+			// Combine all arguments into a single message
+			var values []string
 			for _, arg := range ev.Args {
-				slog.Info("Console message captured",
-					"type", ev.Type,
-					"value", arg.Value)
+				// arg.Value is JSON-encoded, trim quotes for strings
+				val := string(arg.Value)
+				if len(val) >= 2 && val[0] == '"' && val[len(val)-1] == '"' {
+					val = val[1 : len(val)-1]
+				}
+				values = append(values, val)
 			}
+			slog.Info("Console message captured",
+				"type", ev.Type,
+				"value", strings.Join(values, " "))
 		case *runtime.EventExceptionThrown:
 			slog.Error("JavaScript exception captured",
 				"text", ev.ExceptionDetails.Text)
@@ -134,21 +216,13 @@ func (b *Browser) CaptureConsoleLogs() error {
 		}
 	})
 
-	slog.Debug("Navigating to target URL for console log capture", "url", b.TargetURL)
+	slog.Debug("Console log listeners set up successfully")
+}
 
-	if err := chromedp.Run(b.Ctx,
-		chromedp.Navigate(b.TargetURL),
-		chromedp.ActionFunc(func(ctx context.Context) error {
-			slog.Debug("Applying rendering delay", "delay", b.Delay, "url", b.TargetURL)
-			return nil
-		}),
-		chromedp.Sleep(time.Duration(b.Delay)*time.Second),
-	); err != nil {
-		slog.Error("Failed to navigate to target URL", "url", b.TargetURL, "error", err)
-		return err
-	}
-
-	slog.Debug("Console log capture completed")
+// CaptureConsoleLogs is deprecated - use SetupConsoleLogListeners instead.
+// Kept for backwards compatibility but now just calls SetupConsoleLogListeners.
+func (b *Browser) CaptureConsoleLogs() error {
+	b.SetupConsoleLogListeners()
 	return nil
 }
 
@@ -158,19 +232,14 @@ func (b *Browser) GetBodyText() (string, error) {
 }
 
 // GetTextBySelector extracts text from elements matching the given CSS selector.
+// Assumes NavigateAndPrepare has already been called.
 func (b *Browser) GetTextBySelector(selector string) (string, error) {
-	slog.Debug("Extracting text by CSS selector", "selector", selector, "url", b.TargetURL)
+	slog.Debug("Extracting text by CSS selector", "selector", selector)
 
 	var texts []string
 	err := chromedp.Run(b.Ctx,
-		chromedp.Navigate(b.TargetURL),
-		chromedp.ActionFunc(func(ctx context.Context) error {
-			slog.Debug("Applying rendering delay", "delay", b.Delay, "selector", selector)
-			return nil
-		}),
-		chromedp.Sleep(time.Duration(b.Delay)*time.Second),
 		chromedp.Evaluate(`
-			Array.from(document.querySelectorAll('`+selector+`')).map(el => el.textContent.trim()).filter(text => text.length > 0)
+			Array.from(document.querySelectorAll('`+selector+`')).map(el => el.innerText.trim()).filter(text => text.length > 0)
 		`, &texts),
 	)
 	if err != nil {
@@ -191,21 +260,16 @@ func (b *Browser) GetTextBySelector(selector string) (string, error) {
 }
 
 // TakeScreenshot captures a screenshot of the current page.
+// Assumes NavigateAndPrepare has already been called.
 func (b *Browser) TakeScreenshot() ([]byte, error) {
-	slog.Debug("Taking screenshot", "url", b.TargetURL)
+	slog.Debug("Taking screenshot")
 
 	var buf []byte
 	err := chromedp.Run(b.Ctx,
-		chromedp.Navigate(b.TargetURL),
-		chromedp.ActionFunc(func(ctx context.Context) error {
-			slog.Debug("Applying rendering delay before screenshot", "delay", b.Delay, "url", b.TargetURL)
-			return nil
-		}),
-		chromedp.Sleep(time.Duration(b.Delay)*time.Second),
 		chromedp.FullScreenshot(&buf, 90),
 	)
 	if err != nil {
-		slog.Error("Failed to capture screenshot", "url", b.TargetURL, "error", err)
+		slog.Error("Failed to capture screenshot", "error", err)
 		return nil, err
 	}
 
@@ -214,17 +278,12 @@ func (b *Browser) TakeScreenshot() ([]byte, error) {
 }
 
 // PrintToPDF generates a PDF of the current page.
+// Assumes NavigateAndPrepare has already been called.
 func (b *Browser) PrintToPDF() ([]byte, error) {
-	slog.Debug("Generating PDF", "url", b.TargetURL)
+	slog.Debug("Generating PDF")
 
 	var pdfBuf []byte
 	err := chromedp.Run(b.Ctx,
-		chromedp.Navigate(b.TargetURL),
-		chromedp.ActionFunc(func(ctx context.Context) error {
-			slog.Debug("Applying rendering delay before PDF generation", "delay", b.Delay, "url", b.TargetURL)
-			return nil
-		}),
-		chromedp.Sleep(time.Duration(b.Delay)*time.Second),
 		chromedp.ActionFunc(func(ctx context.Context) error {
 			var err error
 			pdfBuf, _, err = page.PrintToPDF().WithPrintBackground(true).Do(ctx)
@@ -232,7 +291,7 @@ func (b *Browser) PrintToPDF() ([]byte, error) {
 		}),
 	)
 	if err != nil {
-		slog.Error("Failed to generate PDF", "url", b.TargetURL, "error", err)
+		slog.Error("Failed to generate PDF", "error", err)
 		return nil, err
 	}
 
