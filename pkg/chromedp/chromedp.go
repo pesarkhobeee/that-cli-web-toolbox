@@ -24,7 +24,7 @@ type Browser struct {
 
 // InitializeChromedp creates a new browser session with timeout.
 // If remoteDebuggingPort is provided, connects to existing Chrome instance.
-// jsCode is optional JavaScript code to execute before each action.
+// jsCode is optional JavaScript code to execute once after navigation and delay.
 func InitializeChromedp(target string, timeout int, delay int, remoteDebuggingPort string, jsCode string) (*Browser, error) {
 	slog.Debug("Initializing Chrome browser", "target", target, "timeout", timeout, "delay", delay, "remotePort", remoteDebuggingPort, "hasJSCode", jsCode != "")
 
