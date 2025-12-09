@@ -32,7 +32,7 @@ This is a Go CLI tool for web automation using Chrome DevTools Protocol (CDP) vi
    - `Browser` struct holds context, cancel func, target URL, delay, and optional JS code
    - `InitializeChromedp()` creates browser session (local headless or remote debugging)
    - Action methods: `TakeScreenshot()`, `PrintToPDF()`, `GetTextBySelector()`, `CaptureConsoleLogs()`
-   - Each action follows pattern: Navigate → Delay → Execute JS → Perform Action
+   - After initialization, NavigateAndPrepare() is called once, then actions are performed sequentially on the same page
 
 ### Key Dependencies
 
@@ -42,11 +42,12 @@ This is a Go CLI tool for web automation using Chrome DevTools Protocol (CDP) vi
 
 ### Execution Flow
 
-All browser actions share the same pattern:
-1. Navigate to target URL
-2. Apply rendering delay (`--delay`)
-3. Execute custom JavaScript if provided (`--js` or `--js-file`)
-4. Perform the actual action (screenshot, PDF, text extraction, etc.)
+Execution flow:
+1. `NavigateAndPrepare()` is called once:
+   a. Navigate to target URL
+   b. Apply rendering delay (`--delay`)
+   c. Execute custom JavaScript if provided (`--js` or `--js-file`)
+2. Perform all requested actions sequentially (screenshot, PDF, text extraction, etc.)
 
 ### Custom JavaScript Handling
 

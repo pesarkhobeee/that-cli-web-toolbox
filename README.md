@@ -201,9 +201,9 @@ await new Promise(resolve => setTimeout(resolve, 500));
 ### Notes
 
 - `--js` and `--js-file` are mutually exclusive
-- JavaScript executes after the page loads and the delay period, but before the action (screenshot, PDF, etc.)
+- JavaScript executes once after the page loads and the delay period, before any actions are performed (screenshot, PDF, etc.)
 - Use `--loglevel debug` to see JavaScript execution details
-- The tool execution order is: Navigate → Delay → JavaScript → Action
+- The tool execution order is: Navigate → Delay → JavaScript → Actions
 
 ## Timeout and Delay Relationship
 
