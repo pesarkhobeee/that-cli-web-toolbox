@@ -24,6 +24,8 @@ type Config struct {
 	Target               string
 	LogLevel             string
 	RemoteDebuggingPort  string
+	JS                   string
+	JSFile               string
 }
 
 var cfg Config
@@ -64,7 +66,16 @@ Examples:
   that-cli-web-toolbox --screenshot --delay 15 https://slow-site.com
 
   # Connect to existing Chrome with remote debugging
-  that-cli-web-toolbox --remote-debugging-port localhost:9222 --screenshot https://example.com`,
+  that-cli-web-toolbox --remote-debugging-port localhost:9222 --screenshot https://example.com
+
+  # Execute custom JavaScript before taking screenshot (scroll to bottom, click buttons, etc.)
+  that-cli-web-toolbox --screenshot --js "window.scrollTo(0, document.body.scrollHeight)" https://example.com
+
+  # Execute async JavaScript with automatic wrapping
+  that-cli-web-toolbox --screenshot --js "await new Promise(r => setTimeout(r, 2000)); window.scrollTo(0, document.body.scrollHeight);" https://example.com
+
+  # Execute JavaScript from file to load dynamic content
+  that-cli-web-toolbox --screenshot --js-file scroll-to-bottom.js https://example.com`,
 	RunE: runThatCliWebBrowser,
 	Args: cobra.ExactArgs(1),
 }
@@ -81,6 +92,10 @@ func init() {
 		"Set the logging level (debug, info, warn, error)")
 	rootCmd.Flags().StringVarP(&cfg.RemoteDebuggingPort, "remote-debugging-port", "r", "",
 		"Connect to existing Chrome instance with remote debugging (e.g., localhost:9222)")
+	rootCmd.Flags().StringVar(&cfg.JS, "js", "",
+		"Execute custom JavaScript code before taking action (supports async with 'await')")
+	rootCmd.Flags().StringVar(&cfg.JSFile, "js-file", "",
+		"Execute JavaScript from file before taking action (supports async with 'await')")
 }
 
 func main() {
@@ -119,7 +134,9 @@ func runThatCliWebBrowser(cmd *cobra.Command, args []string) error {
 		"screenshot", cfg.Screenshot,
 		"printToPDF", cfg.PrintToPDF,
 		"getBody", cfg.GetBody,
-		"cssSelector", cfg.GetTextByCssSelector)
+		"cssSelector", cfg.GetTextByCssSelector,
+		"js", cfg.JS,
+		"jsFile", cfg.JSFile)
 
 	if len(args) == 0 {
 		slog.Error("No target URL or file path provided")
@@ -180,18 +197,53 @@ func runThatCliWebBrowser(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("at least one action must be specified (--body, --screenshot, --printtopdf, --consolelog, or --gettextbycssselector)")
 	}
 
+	// Validate --js and --js-file are mutually exclusive
+	if cfg.JS != "" && cfg.JSFile != "" {
+		slog.Error("Both --js and --js-file specified")
+		return fmt.Errorf("--js and --js-file are mutually exclusive, use only one")
+	}
+
+	// Read JavaScript from file if --js-file is specified
+	var jsCode string
+	if cfg.JSFile != "" {
+		slog.Debug("Reading JavaScript from file", "file", cfg.JSFile)
+		content, err := os.ReadFile(cfg.JSFile)
+		if err != nil {
+			slog.Error("Failed to read JavaScript file", "file", cfg.JSFile, "error", err)
+			return fmt.Errorf("failed to read JavaScript file %q: %w", cfg.JSFile, err)
+		}
+		jsCode = string(content)
+		slog.Debug("JavaScript file loaded successfully", "file", cfg.JSFile, "codeLength", len(jsCode))
+	} else if cfg.JS != "" {
+		jsCode = cfg.JS
+		slog.Debug("Using inline JavaScript", "codeLength", len(jsCode))
+	}
+
 	// Initialize browser
 	if cfg.RemoteDebuggingPort != "" {
 		slog.Debug("Connecting to existing browser", "target", cfg.Target, "timeout", cfg.Timeout, "delay", cfg.Delay, "remotePort", cfg.RemoteDebuggingPort)
 	} else {
 		slog.Debug("Initializing new browser", "target", cfg.Target, "timeout", cfg.Timeout, "delay", cfg.Delay)
 	}
-	browser, err := chromedphelper.InitializeChromedp(cfg.Target, cfg.Timeout, cfg.Delay, cfg.RemoteDebuggingPort)
+	browser, err := chromedphelper.InitializeChromedp(cfg.Target, cfg.Timeout, cfg.Delay, cfg.RemoteDebuggingPort, jsCode)
 	if err != nil {
 		slog.Error("Failed to initialize browser", "error", err)
 		return fmt.Errorf("failed to initialize browser: %w", err)
 	}
 	defer browser.Cancel()
+
+	// Setup console log listeners before navigation (if needed)
+	if cfg.ConsoleLog {
+		slog.Info("Setting up console log capture")
+		browser.SetupConsoleLogListeners()
+	}
+
+	// Navigate to target URL, apply delay, and execute custom JS (once for all actions)
+	slog.Info("Navigating to target and preparing page", "url", cfg.Target)
+	if err := browser.NavigateAndPrepare(); err != nil {
+		slog.Error("Failed to navigate and prepare page", "error", err)
+		return fmt.Errorf("failed to navigate and prepare page: %w", err)
+	}
 
 	// Handle GetTextByCssSelector
 	if cfg.GetTextByCssSelector != "" {
@@ -217,15 +269,6 @@ func runThatCliWebBrowser(cmd *cobra.Command, args []string) error {
 		fmt.Println(text)
 	}
 
-	// Handle console logs
-	if cfg.ConsoleLog {
-		slog.Info("Starting console log capture")
-		if err := browser.CaptureConsoleLogs(); err != nil {
-			slog.Error("Failed to capture console logs", "error", err)
-			return fmt.Errorf("failed to capture console logs: %w", err)
-		}
-	}
-
 	// Handle screenshot
 	if cfg.Screenshot {
 		slog.Info("Taking screenshot")
@@ -235,7 +278,7 @@ func runThatCliWebBrowser(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("failed to take screenshot: %w", err)
 		}
 
-		fileName := fmt.Sprintf("screenshot_%s.png", time.Now().Format("20060102150405"))
+		fileName := fmt.Sprintf("screenshot_%s.jpg", time.Now().Format("20060102150405"))
 		slog.Debug("Saving screenshot", "fileName", fileName, "size", len(imageBuf))
 		if err := os.WriteFile(fileName, imageBuf, 0o644); err != nil {
 			slog.Error("Failed to save screenshot", "fileName", fileName, "error", err)
